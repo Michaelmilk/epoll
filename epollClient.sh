@@ -1,3 +1,3 @@
 #/bin/bash
-g++ -o epollClient epollClient.cpp
+g++ -o epollClient epollClient.cpp -pthread
 # -lpthread

@@ -12,6 +12,9 @@
 #include <string.h>
 #include <queue>
 #include <iostream>
+#include <pthread.h>
+#include <string>
+#include <semaphore.h>
 
 using namespace std;
 
@@ -24,16 +27,29 @@ using namespace std;
 #define MAXLINE		10240
 #define MAX_EVENTS	500
 
+int count = 0;
+
+struct Info {
+	int equip_num;
+	int len;
+	char data[1024];
+};
+
 
 //相关全局变量：EPOLL描述符，服务器端监听SOCKET，数据缓冲区以及事件数组
-int         epollfd;
-int connfd;
-struct epoll_event eventList[MAX_EVENTS];
+int         		epollfd;
+int 				connfd;
+struct epoll_event 	eventList[MAX_EVENTS];
+queue<Info>			recv_que;
+sem_t 				sem;						//semaphore
+pthread_t 			a_thread;
+pthread_mutex_t 	mutex;
 
 
 void handle(int sockfd)
 {
-	char sendline[MAXLINE], recvline[MAXLINE];
+	char recvline[MAXLINE];
+	memset(recvline, 0, MAXLINE);
 	int n;
 
 	// printf("dfsdsd\n");
@@ -53,6 +69,12 @@ void handle(int sockfd)
 		printf("echoclient: server terminated prematurely\n");
 	}
 	printf("Recv from srv, content : %s\n", recvline);
+	Info info;
+	info.equip_num = count++;
+	info.len = strlen(recvline);
+	strcpy(info.data, recvline);
+	sem_post(&sem);
+	recv_que.push(info);
 	//write(STDOUT_FILENO, recvline, n);
 	//如果用标准库的缓存流输出有时会出现问题
 	//fputs(recvline, stdout);
@@ -109,6 +131,7 @@ int EpollHandle()
 	while(1)
 	{
 		//printf("loop\n");
+		//pthread_mutex_lock(&mutex);
 		char sendline[MAXLINE];
 		printf("Input : ");
 		scanf("%s", sendline);
@@ -133,6 +156,7 @@ int EpollHandle()
 		for (; n < nfds; n++)
 			handleEvent(eventList + n);
 		//printf("again loop\n");
+		//pthread_mutex_unlock(&mutex);
 	}
 
 	close(epollfd);
@@ -156,9 +180,24 @@ int ConnectToSrv(char* servInetAddr, int servPort)
 }
 
 
+void* PatrolEquipment(void *arg)
+{
+	while (true) {
+		sem_wait(&sem);
+		//pthread_mutex_lock(&mutex);
+		while (!recv_que.empty()) {
+			Info info = recv_que.front();
+			recv_que.pop();
+			cout << "thread func  ";
+			cout << info.equip_num << " " << info.len << " " << info.data << endl;
+		}
+		//pthread_mutex_unlock(&mutex);
+	}
+}
+
 int main(int argc, char **argv)
 {
-	char * servInetAddr = "127.0.0.1";
+	char * servInetAddr = "192.168.1.102";//"127.0.0.1";
 	int servPort = 6888;
 	//char buf[MAXLINE];
 	//int connfd;
@@ -189,10 +228,28 @@ int main(int argc, char **argv)
 	// 	return -1;
 	// }
 	printf("welcome to echoclient\n");
+
+	if (sem_init(&sem, 0, 0) != 0) {
+		perror("Sem init failed");  
+ 	 exit(EXIT_FAILURE);
+	}
+	 
+	// if (pthread_mutex_init(&mutex, NULL) != 0) {
+	// 	perror("Mutex init failed");  
+	//	exit(EXIT_FAILURE);
+	// }
+
+	if (pthread_create(&a_thread, NULL, PatrolEquipment, NULL) != 0) {
+		perror("Thread join failed!\n");
+        exit(EXIT_FAILURE);
+	}
+
 	//handle(connfd);     /* do it all */
 	ConnectToSrv(servInetAddr, servPort);
 	EpollHandle();
 	close(connfd);
+	sem_destroy(&sem);
+	//pthread_mutex_destroy(&mutex);
 	printf("exit\n");
 	exit(0);
 }
